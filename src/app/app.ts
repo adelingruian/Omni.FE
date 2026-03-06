@@ -1,4 +1,5 @@
-import { Component, inject } from '@angular/core';
+import { Component, DestroyRef, OnDestroy, inject } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { CopilotAlert, FlightRecord, FlightsService } from './services/flights.service';
 
 @Component({
@@ -6,8 +7,9 @@ import { CopilotAlert, FlightRecord, FlightsService } from './services/flights.s
   templateUrl: './app.html',
   styleUrl: './app.scss'
 })
-export class App {
+export class App implements OnDestroy {
   private readonly flightsService = inject(FlightsService);
+  private readonly destroyRef = inject(DestroyRef);
 
   protected readonly title = 'Disruption Copilot';
   protected flights: FlightRecord[] = [];
@@ -19,10 +21,21 @@ export class App {
   protected totalPassengers = 0;
 
   constructor() {
-    this.flightsService.getFlights().subscribe((flights) => {
+    this.flightsService.getFlights().pipe(takeUntilDestroyed(this.destroyRef)).subscribe((flights) => {
       this.flights = flights;
       this.updateMetrics();
     });
+
+    this.flightsService.getFlightsUpdates().pipe(takeUntilDestroyed(this.destroyRef)).subscribe((flights) => {
+      this.flights = flights;
+      this.updateMetrics();
+    });
+
+    this.flightsService.startFlightsUpdates();
+  }
+
+  ngOnDestroy(): void {
+    this.flightsService.stopFlightsUpdates();
   }
 
   private updateMetrics(): void {

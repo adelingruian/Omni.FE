@@ -1,13 +1,21 @@
-import { provideHttpClient } from '@angular/common/http';
-import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
+import { EMPTY, of } from 'rxjs';
 import { App } from './app';
+import { FlightsService } from './services/flights.service';
 
 describe('App', () => {
+  const flightsServiceMock = {
+    getFlights: () => of([]),
+    getFlightsUpdates: () => EMPTY,
+    getCopilotAlerts: () => [],
+    startFlightsUpdates: () => undefined,
+    stopFlightsUpdates: () => undefined
+  };
+
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       imports: [App],
-      providers: [provideHttpClient(), provideHttpClientTesting()]
+      providers: [{ provide: FlightsService, useValue: flightsServiceMock }]
     }).compileComponents();
   });
 

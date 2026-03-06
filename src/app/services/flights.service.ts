@@ -1,6 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
-import { Observable } from 'rxjs';
+import * as signalR from '@microsoft/signalr';
+import { Observable, Subject } from 'rxjs';
 
 export interface FlightRecord {
   flightId: number;
@@ -34,6 +35,10 @@ export interface CopilotAlert {
 export class FlightsService {
   private readonly http = inject(HttpClient);
   private readonly flightsApiUrl = 'http://localhost:5167/flights';
+  private readonly flightsHubUrl = 'http://localhost:5167/hubs/flights';
+  private readonly flightsUpdatesSubject = new Subject<FlightRecord[]>();
+
+  private hubConnection: signalR.HubConnection | null = null;
 
   private readonly copilotAlerts: CopilotAlert[] = [
     {
@@ -62,6 +67,40 @@ export class FlightsService {
 
   getFlights(): Observable<FlightRecord[]> {
     return this.http.get<FlightRecord[]>(this.flightsApiUrl);
+  }
+
+  getFlightsUpdates(): Observable<FlightRecord[]> {
+    return this.flightsUpdatesSubject.asObservable();
+  }
+
+  startFlightsUpdates(): void {
+    if (this.hubConnection) {
+      return;
+    }
+
+    this.hubConnection = new signalR.HubConnectionBuilder()
+      .withUrl(this.flightsHubUrl, { withCredentials: true })
+      .withAutomaticReconnect()
+      .build();
+
+    this.hubConnection.on('FlightsUpdated', (flights: FlightRecord[]) => {
+      this.flightsUpdatesSubject.next(flights);
+    });
+
+    void this.hubConnection.start().catch((error: unknown) => {
+      console.error('SignalR flights hub connection failed', error);
+      this.hubConnection = null;
+    });
+  }
+
+  stopFlightsUpdates(): void {
+    if (!this.hubConnection) {
+      return;
+    }
+
+    const connection = this.hubConnection;
+    this.hubConnection = null;
+    void connection.stop();
   }
 
   getCopilotAlerts(): CopilotAlert[] {

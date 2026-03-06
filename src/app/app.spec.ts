@@ -1,6 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { EMPTY, of } from 'rxjs';
 import { App } from './app';
+import { DisruptionsService } from './services/disruptions.service';
 import { FlightsService } from './services/flights.service';
 
 describe('App', () => {
@@ -12,10 +13,28 @@ describe('App', () => {
     stopFlightsUpdates: () => undefined
   };
 
+  const disruptionsServiceMock = {
+    getGates: () => of([{ gateId: 4, name: 'Gate 4' }]),
+    getDisruptions: () => of([]),
+    createDisruption: () =>
+      of({
+        disruptionId: 1,
+        resourceType: 'Gate',
+        resourceId: 'Gate 1',
+        startsAt: '2026-03-06T00:00:00+02:00',
+        endsAt: '2026-03-07T00:00:00+02:00',
+        status: 'Solved'
+      }),
+    solveDisruption: () => of(undefined)
+  };
+
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       imports: [App],
-      providers: [{ provide: FlightsService, useValue: flightsServiceMock }]
+      providers: [
+        { provide: FlightsService, useValue: flightsServiceMock },
+        { provide: DisruptionsService, useValue: disruptionsServiceMock }
+      ]
     }).compileComponents();
   });
 

@@ -13,7 +13,7 @@ export interface FlightRecord {
   actualDeparture: string | null;
   scheduledArrival: string;
   actualArrival: string | null;
-  gate: string;
+  gate: FlightGateRecord;
   runway: string;
   passengerNumber: number;
   delayMinutes: number;
@@ -21,6 +21,11 @@ export interface FlightRecord {
   crewFlightAttendants: number;
   baggageConveyorBelt: string;
   baggageTotalChecked: number;
+}
+
+export interface FlightGateRecord {
+  gateId: string;
+  status: string;
 }
 
 export interface CopilotAlert {

@@ -1,3 +1,98 @@
+@if (isControlPage) {
+  <main class="control-shell">
+    <header class="control-header">
+      <div>
+        <p class="control-kicker">Demo Sandbox</p>
+        <h1>Disruption Control Page</h1>
+      </div>
+      <a class="back-link" href="/">Back To Dashboard</a>
+    </header>
+
+    <section class="control-grid">
+      <article class="control-card">
+        <h2>Create Disruption</h2>
+        <p>POST <code>/disruptions</code></p>
+
+        <label>
+          Resource Type
+          <select [value]="controlResourceType" (change)="controlResourceType = $any($event.target).value">
+            <option value="Gate">Gate</option>
+          </select>
+        </label>
+
+        <label>
+          Gate
+          <select [value]="controlResourceId" (change)="controlResourceId = $any($event.target).value">
+            <option value="" disabled>Select a gate</option>
+            @for (gate of gates; track gate.gateId) {
+              <option [value]="gate.name">{{ getGateOptionLabel(gate) }}</option>
+            }
+          </select>
+        </label>
+
+        <button type="button" (click)="createDisruption()" [disabled]="isControlBusy">Create</button>
+      </article>
+
+      <article class="control-card">
+        <h2>Solve Disruption</h2>
+        <p>POST <code>/disruptions/&lt;id&gt;/solve</code></p>
+
+        <label>
+          Disruption Id
+          <input
+            type="number"
+            [value]="controlSolveId"
+            (input)="controlSolveId = $any($event.target).value"
+            min="1"
+          />
+        </label>
+
+        <button type="button" (click)="solveDisruption()" [disabled]="isControlBusy">Solve</button>
+        <button type="button" class="secondary" (click)="loadDisruptions()" [disabled]="isControlBusy">Refresh List</button>
+      </article>
+    </section>
+
+    @if (controlStatusMessage) {
+      <p class="control-status control-status--ok">{{ controlStatusMessage }}</p>
+    }
+
+    @if (controlError) {
+      <p class="control-status control-status--error">{{ controlError }}</p>
+    }
+
+    <section class="control-list">
+      <h2>All Disruptions</h2>
+      <p>GET <code>/disruptions</code></p>
+
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Id</th>
+              <th scope="col">Resource Type</th>
+              <th scope="col">Resource Id</th>
+              <th scope="col">Status</th>
+              <th scope="col">Starts At</th>
+              <th scope="col">Ends At</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (disruption of disruptions; track disruption.disruptionId) {
+              <tr>
+                <td>{{ disruption.disruptionId }}</td>
+                <td>{{ disruption.resourceType }}</td>
+                <td>{{ disruption.resourceId }}</td>
+                <td>{{ disruption.status }}</td>
+                <td>{{ disruption.startsAt }}</td>
+                <td>{{ disruption.endsAt }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+} @else {
 <main class="dashboard-shell">
   <header class="topbar" aria-label="Operations summary">
     <div class="brand-block">
@@ -9,6 +104,8 @@
         <h1>{{ title }}</h1>
       </div>
     </div>
+
+    <a class="back-link" href="/control">Open Control Page</a>
 
     <ul class="kpi-strip" aria-label="Dispatch metrics">
       <li>
@@ -60,7 +157,9 @@
                 <td>{{ flight.origin }} -> {{ flight.destination }}</td>
                 <td>{{ flight.aircraft }}</td>
                 <td>{{ formatUtcLabel(flight.scheduledDeparture) }}Z</td>
-                <td>{{ flight.gate }}</td>
+                <td>
+                  <span [class]="getGateClass(flight.gate)">{{ getGateLabel(flight.gate) }}</span>
+                </td>
                 <td>
                   <span class="baggage-label">{{ flight.baggageConveyorBelt }}</span>
                   <span class="baggage-count">{{ flight.baggageTotalChecked }} bags</span>
@@ -125,3 +224,4 @@
     </aside>
   </section>
 </main>
+}

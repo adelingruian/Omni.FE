@@ -1,0 +1,127 @@
+<main class="dashboard-shell">
+  <header class="topbar" aria-label="Operations summary">
+    <div class="brand-block">
+      <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M17.8 19.2 16 11l4.5-4.5a1 1 0 0 0-1.4-1.4L14.6 9.6 6.5 8a1 1 0 0 0-.9 1.7l4.5 4.5-1.6 4.5a1 1 0 0 0 1.3 1.3l4.5-1.6 4.5 1.6a1 1 0 0 0 1.3-1.3Z" />
+      </svg>
+      <div>
+        <p class="brand-kicker">Operations Control Center</p>
+        <h1>{{ title }}</h1>
+      </div>
+    </div>
+
+    <ul class="kpi-strip" aria-label="Dispatch metrics">
+      <li>
+        <span>Total Flights</span>
+        <strong>{{ totalFlights }}</strong>
+      </li>
+      <li>
+        <span>Delayed</span>
+        <strong>{{ delayedFlights }}</strong>
+      </li>
+      <li>
+        <span>Critical Delays</span>
+        <strong>{{ criticalFlights }}</strong>
+      </li>
+      <li>
+        <span>Passengers</span>
+        <strong>{{ totalPassengers }}</strong>
+      </li>
+    </ul>
+  </header>
+
+  <section class="main-grid">
+    <section class="flight-board" aria-labelledby="flight-board-title">
+      <div class="section-header">
+        <h2 id="flight-board-title">Flight Board</h2>
+        <p>Live disruptions and readiness indicators for dispatchers.</p>
+      </div>
+
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Flight</th>
+              <th scope="col">Route</th>
+              <th scope="col">Aircraft</th>
+              <th scope="col">Scheduled Time</th>
+              <th scope="col">Gate</th>
+              <th scope="col">Baggage</th>
+              <th scope="col">Status/Delay</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            @for (flight of flights; track trackByFlightId($index, flight)) {
+              <tr>
+                <td>
+                  <span class="flight-code">{{ flight.flightNumber }}</span>
+                </td>
+                <td>{{ flight.origin }} -> {{ flight.destination }}</td>
+                <td>{{ flight.aircraft }}</td>
+                <td>{{ formatUtcLabel(flight.scheduledDeparture) }}Z</td>
+                <td>{{ flight.gate }}</td>
+                <td>
+                  <span class="baggage-label">{{ flight.baggageConveyorBelt }}</span>
+                  <span class="baggage-count">{{ flight.baggageTotalChecked }} bags</span>
+                </td>
+                <td>
+                  <span [class]="getStatusClass(flight.delayMinutes)">
+                    {{ getStatusLabel(flight.delayMinutes) }}
+                  </span>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <aside class="alert-sidebar" aria-labelledby="alerts-title">
+      <div class="section-header">
+        <h2 id="alerts-title">Copilot AI Alerts</h2>
+        <p>Detected disruption chains and recommended actions.</p>
+      </div>
+
+      <div class="alert-list">
+        @for (alert of alerts; track trackByAlertId($index, alert)) {
+          <article [class]="getAlertCardClass(alert)">
+            <div class="alert-card__title-row">
+              <span class="alert-icon" [attr.aria-label]="getAlertIconLabel(alert)">
+                @if (alert.tone === 'critical') {
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="m10.29 3.86-7.8 13.5A2 2 0 0 0 4.2 20h15.6a2 2 0 0 0 1.73-3l-7.8-13.14a2 2 0 0 0-3.44 0Z" />
+                    <path d="M12 9v4" />
+                    <path d="M12 17h.01" />
+                  </svg>
+                }
+
+                @if (alert.tone === 'warning') {
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M20 7h-7" />
+                    <path d="M14 17H7" />
+                    <circle cx="17" cy="17" r="3" />
+                    <circle cx="7" cy="7" r="3" />
+                  </svg>
+                }
+
+                @if (alert.tone === 'info') {
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M20 6 9 17l-5-5" />
+                  </svg>
+                }
+              </span>
+              <h3>{{ alert.title }}</h3>
+            </div>
+
+            <p>{{ alert.message }}</p>
+
+            @if (alert.actionLabel) {
+              <button type="button" class="alert-action-button">{{ alert.actionLabel }}</button>
+            }
+          </article>
+        }
+      </div>
+    </aside>
+  </section>
+</main>

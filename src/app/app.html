@@ -64,6 +64,15 @@
       <h2>All Disruptions</h2>
       <p>GET <code>/disruptions</code></p>
 
+      <label class="control-filter-toggle">
+        <input
+          type="checkbox"
+          [checked]="showOnlyUnresolved"
+          (change)="showOnlyUnresolved = $any($event.target).checked"
+        />
+        Show only unresolved disruptions
+      </label>
+
       <div class="table-scroll">
         <table>
           <thead>
@@ -74,10 +83,11 @@
               <th scope="col">Status</th>
               <th scope="col">Starts At</th>
               <th scope="col">Ends At</th>
+              <th scope="col">Actions</th>
             </tr>
           </thead>
           <tbody>
-            @for (disruption of disruptions; track disruption.disruptionId) {
+            @for (disruption of getVisibleDisruptions(); track disruption.disruptionId) {
               <tr>
                 <td>{{ disruption.disruptionId }}</td>
                 <td>{{ disruption.resourceType }}</td>
@@ -85,6 +95,16 @@
                 <td>{{ disruption.status }}</td>
                 <td>{{ disruption.startsAt }}</td>
                 <td>{{ disruption.endsAt }}</td>
+                <td>
+                  <button
+                    type="button"
+                    class="table-action"
+                    (click)="solveDisruptionById(disruption.disruptionId)"
+                    [disabled]="isControlBusy || isDisruptionResolved(disruption)"
+                  >
+                    Resolve
+                  </button>
+                </td>
               </tr>
             }
           </tbody>
@@ -159,6 +179,9 @@
                 <td>{{ formatUtcLabel(flight.scheduledDeparture) }}Z</td>
                 <td>
                   <span [class]="getGateClass(flight.gate)">{{ getGateLabel(flight.gate) }}</span>
+                  @if (getGateDescription(flight.gate)) {
+                    <span class="gate-description">{{ getGateDescription(flight.gate) }}</span>
+                  }
                 </td>
                 <td>
                   <span class="baggage-label">{{ flight.baggageConveyorBelt }}</span>

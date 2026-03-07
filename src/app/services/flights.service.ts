@@ -24,8 +24,16 @@ export interface FlightRecord {
 }
 
 export interface FlightGateRecord {
-  gateId: string;
-  status: string;
+  gateName?: string;
+  gateId?: string;
+  status: FlightGateStatus;
+  description: string;
+}
+
+export enum FlightGateStatus {
+  Unavailable = 'Unavailable',
+  Conflict = 'Conflict',
+  Ok = 'Ok'
 }
 
 export interface CopilotAlert {

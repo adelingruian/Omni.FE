@@ -1,6 +1,6 @@
 import { Component, DestroyRef, OnDestroy, inject } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { CopilotAlert, FlightRecord, FlightsService } from './services/flights.service';
+import { CopilotAlert, FlightGateStatus, FlightRecord, FlightsService } from './services/flights.service';
 import { DisruptionRecord, DisruptionsService, GateRecord } from './services/disruptions.service';
 
 @Component({
@@ -32,6 +32,7 @@ export class App implements OnDestroy {
   protected controlStatusMessage = '';
   protected controlError = '';
   protected isControlBusy = false;
+  protected showOnlyUnresolved = true;
 
   constructor() {
     if (this.isControlPage) {
@@ -158,6 +159,24 @@ export class App implements OnDestroy {
       });
   }
 
+  protected solveDisruptionById(id: number): void {
+    this.controlSolveId = String(id);
+    this.solveDisruption();
+  }
+
+  protected isDisruptionResolved(disruption: DisruptionRecord): boolean {
+    const normalized = disruption.status.trim().toLowerCase();
+    return normalized === 'resolved' || normalized === 'solved';
+  }
+
+  protected getVisibleDisruptions(): DisruptionRecord[] {
+    if (!this.showOnlyUnresolved) {
+      return this.disruptions;
+    }
+
+    return this.disruptions.filter((disruption) => !this.isDisruptionResolved(disruption));
+  }
+
   private updateMetrics(): void {
     this.totalFlights = this.flights.length;
     this.delayedFlights = this.flights.filter((flight) => flight.delayMinutes > 0).length;
@@ -203,12 +222,39 @@ export class App implements OnDestroy {
   }
 
   protected getGateLabel(gate: FlightRecord['gate']): string {
-    return gate.gateId;
+    return gate.gateName || gate.gateId || 'Unknown Gate';
+  }
+
+  protected getGateDescription(gate: FlightRecord['gate']): string {
+    return gate.description;
   }
 
   protected getGateClass(gate: FlightRecord['gate']): string {
-    const isDisrupted = gate.status.toLowerCase() === 'disrupted';
-    return isDisrupted ? 'gate-label gate-label--disrupted' : 'gate-label';
+    const normalizedStatus = gate.status?.toString().trim().toLowerCase();
+    console.log('Gate status:', gate.status, 'Normalized:', normalizedStatus);
+    // Supports both string enums and numeric enum values from backend JSON.
+    if (
+      normalizedStatus === 'conflict' ||
+      normalizedStatus === FlightGateStatus.Conflict.toLowerCase()
+    ) {
+      return 'gate-label gate-label--conflict';
+    }
+
+    if (
+      normalizedStatus === 'unavailable' ||
+      normalizedStatus === FlightGateStatus.Unavailable.toLowerCase()
+    ) {
+      return 'gate-label gate-label--unavailable';
+    }
+
+    if (
+      normalizedStatus === 'ok' ||
+      normalizedStatus === FlightGateStatus.Ok.toLowerCase()
+    ) {
+      return 'gate-label gate-label--ok';
+    }
+
+    return 'gate-label';
   }
 
   protected getAlertCardClass(alert: CopilotAlert): string {

@@ -18,6 +18,7 @@
           <select [value]="controlResourceType" (change)="onControlResourceTypeChange($any($event.target).value)">
             <option value="Gate">Gate</option>
             <option value="Runway">Runway</option>
+            <option value="BaggageConveyorBelt">Baggage Conveyor Belt</option>
           </select>
         </label>
 
@@ -25,31 +26,31 @@
           {{ getControlResourceLabel() }}
           <select [value]="controlResourceId" (change)="controlResourceId = $any($event.target).value">
             <option value="" disabled>Select a {{ getControlResourceLabel().toLowerCase() }}</option>
-            @for (resource of getControlResourceOptions(); track resource.id) {
+            @for (resource of controlResourceOptions; track resource.id) {
               <option [value]="resource.id">{{ resource.label }}</option>
             }
           </select>
         </label>
 
-        <button type="button" (click)="createDisruption()" [disabled]="isControlBusy">Create</button>
-      </article>
-
-      <article class="control-card">
-        <h2>Solve Disruption</h2>
-        <p>POST <code>/disruptions/&lt;id&gt;/solve</code></p>
-
         <label>
-          Disruption Id
+          Start Hour (UTC, optional)
           <input
-            type="number"
-            [value]="controlSolveId"
-            (input)="controlSolveId = $any($event.target).value"
-            min="1"
+            type="time"
+            [value]="controlStartHour"
+            (input)="controlStartHour = $any($event.target).value"
           />
         </label>
 
-        <button type="button" (click)="solveDisruption()" [disabled]="isControlBusy">Solve</button>
-        <button type="button" class="secondary" (click)="loadDisruptions()" [disabled]="isControlBusy">Refresh List</button>
+        <label>
+          End Hour (UTC, optional)
+          <input
+            type="time"
+            [value]="controlEndHour"
+            (input)="controlEndHour = $any($event.target).value"
+          />
+        </label>
+
+        <button type="button" (click)="createDisruption()" [disabled]="isControlBusy">Create</button>
       </article>
     </section>
 
@@ -94,8 +95,14 @@
                 <td>{{ disruption.resourceType }}</td>
                 <td>{{ disruption.resourceId }}</td>
                 <td>{{ disruption.status }}</td>
-                <td>{{ disruption.startsAt }}</td>
-                <td>{{ disruption.endsAt }}</td>
+                <td>
+                  <span class="control-utc-primary">{{ formatBackendUtcDateTime(disruption.startsAt) }}</span>
+                  <small class="control-utc-raw">{{ getBackendUtcRawValue(disruption.startsAt) }}</small>
+                </td>
+                <td>
+                  <span class="control-utc-primary">{{ formatBackendUtcDateTime(disruption.endsAt) }}</span>
+                  <small class="control-utc-raw">{{ getBackendUtcRawValue(disruption.endsAt) }}</small>
+                </td>
                 <td>
                   <button
                     type="button"
@@ -183,6 +190,39 @@
         }
       </details>
 
+      <section class="flight-filters" aria-label="Flight filters">
+        <div class="flight-filters__quick-actions">
+          <button
+            type="button"
+            class="flight-filters__quick"
+            (click)="filterOmrDepartures()"
+            [class.flight-filters__quick--active]="departureFilter === 'OMR' && arrivalFilter === 'all'"
+          >
+            Only Departures
+          </button>
+          <button
+            type="button"
+            class="flight-filters__quick"
+            (click)="filterOmrArrivals()"
+            [class.flight-filters__quick--active]="arrivalFilter === 'OMR' && departureFilter === 'all'"
+          >
+            Only Arrivals
+          </button>
+        </div>
+
+        <div class="flight-filters__toggle-wrap">
+          <label class="flight-filters__toggle">
+            <input
+              type="checkbox"
+              [checked]="showOnlyAffectedFlights"
+              (change)="showOnlyAffectedFlights = $any($event.target).checked"
+            />
+            <span class="flight-filters__toggle-control" aria-hidden="true"></span>
+            Only affected flights
+          </label>
+        </div>
+      </section>
+
       <div class="table-scroll">
         <table>
           <thead>
@@ -192,14 +232,16 @@
               <th scope="col">Route</th>
               <th scope="col">Aircraft</th>
               <th scope="col">Runway</th>
-              <th scope="col">Scheduled Dep / Arr</th>
+              <th scope="col">Departure/Arrival(delay)</th>
               <th scope="col">Gate</th>
-              <th scope="col">Status</th>
+              <th scope="col">Baggage Carousel</th>
+              <th scope="col">Disruption Score</th>
+              <th scope="col">Suggested Action</th>
             </tr>
           </thead>
 
           <tbody>
-            @for (flight of flights; track trackByFlightId($index, flight)) {
+            @for (flight of getVisibleFlights(); track trackByFlightId($index, flight)) {
               <tr>
                 <td>
                   <button
@@ -209,7 +251,11 @@
                     [attr.aria-label]="getExpandedToggleLabel(flight)"
                     (click)="toggleFlightExpanded(flight.flightId)"
                   >
-                    {{ isFlightExpanded(flight.flightId) ? 'Hide' : 'View' }}
+                    <span
+                      class="expand-row-button__chevron"
+                      [class.expand-row-button__chevron--open]="isFlightExpanded(flight.flightId)"
+                      aria-hidden="true"
+                    ></span>
                   </button>
                 </td>
                 <td>
@@ -221,22 +267,58 @@
                   <span [class]="getRunwayClass(flight.runway)">{{ getRunwayLabel(flight.runway) }}</span>
                 </td>
                 <td>
-                  <span class="schedule-time">Dep: {{ formatUtcLabel(flight.scheduledDeparture) }}Z</span>
-                  <span class="schedule-time">Arr: {{ formatUtcLabel(flight.scheduledArrival) }}Z</span>
+                  @if (flight.scheduledDeparture) {
+                    <span class="schedule-time">
+                      <span class="schedule-icon" aria-label="Departure" title="Departure">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                          <path d="M4 20h16" />
+                          <path d="m6 14 8-8" />
+                          <path d="m10 6 4 0 0 4" />
+                        </svg>
+                      </span>
+                      {{ formatTime24h(flight.scheduledDeparture) }}
+                      @if (getDepartureDelayText(flight)) {
+                        <span class="schedule-delay">{{ getDepartureDelayText(flight) }}</span>
+                      }
+                    </span>
+                  }
+                  @if (flight.scheduledArrival) {
+                    <span class="schedule-time">
+                      <span class="schedule-icon" aria-label="Arrival" title="Arrival">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                          <path d="M4 20h16" />
+                          <path d="m6 10 8 8" />
+                          <path d="m10 18 4 0 0-4" />
+                        </svg>
+                      </span>
+                      {{ formatTime24h(flight.scheduledArrival) }}
+                      @if (getArrivalDelayText(flight)) {
+                        <span class="schedule-delay">{{ getArrivalDelayText(flight) }}</span>
+                      }
+                    </span>
+                  }
                 </td>
                 <td>
                   <span [class]="getGateClass(flight.gate)">{{ getGateLabel(flight.gate) }}</span>
                 </td>
+                <td>{{ getBaggageCarouselLabel(flight) }}</td>
                 <td>
-                  <span [class]="getStatusClass(flight.delayMinutes)">
-                    {{ getStatusLabel(flight.delayMinutes) }}
-                  </span>
+                  <div [class]="getDisruptionScoreClass(flight)">
+                    <strong>{{ getDisruptionScorePoints(flight) }}</strong>
+                    <span>
+                      {{ getDisruptionRiskLabel(flight) }}
+                      @if (isCriticalRisk(flight)) {
+                        <span class="risk-siren" aria-label="Critical risk" title="Critical risk">🚨</span>
+                      }
+                    </span>
+                  </div>
                 </td>
+                <td></td>
               </tr>
 
               @if (isFlightExpanded(flight.flightId)) {
                 <tr class="flight-details-row">
-                  <td colspan="8">
+                  <td colspan="10">
                     <section class="flight-details" [attr.aria-label]="'Details for ' + flight.flightNumber">
                       <div class="flight-details__item">
                         <span class="flight-details__label">Gate Status</span>
@@ -246,33 +328,47 @@
                         <span class="flight-details__label">Runway Status</span>
                         <strong>{{ getRunwayStatusLabel(flight.runway) }}</strong>
                       </div>
-                      <div class="flight-details__item">
-                        <span class="flight-details__label">Scheduled Departure</span>
-                        <strong>{{ formatUtcLabel(flight.scheduledDeparture) }}Z</strong>
-                      </div>
-                      <div class="flight-details__item">
-                        <span class="flight-details__label">Scheduled Arrival</span>
-                        <strong>{{ formatUtcLabel(flight.scheduledArrival) }}Z</strong>
-                      </div>
-                      <div class="flight-details__item">
-                        <span class="flight-details__label">Actual Departure</span>
-                        <strong>{{ formatOptionalUtcLabel(flight.actualDeparture) }}</strong>
-                      </div>
-                      <div class="flight-details__item">
-                        <span class="flight-details__label">Actual Arrival</span>
-                        <strong>{{ formatOptionalUtcLabel(flight.actualArrival) }}</strong>
-                      </div>
-                      <div class="flight-details__item">
-                        <span class="flight-details__label">Crew</span>
-                        <strong>{{ flight.crewPilots }} pilots / {{ flight.crewFlightAttendants }} cabin</strong>
-                      </div>
+                      @if (flight.scheduledDeparture) {
+                        <div class="flight-details__item">
+                          <span class="flight-details__label">Scheduled Departure</span>
+                          <strong>
+                            {{ formatUtcLabel(flight.scheduledDeparture) }}
+                            @if (getDepartureDelayText(flight)) {
+                              ({{ getDepartureDelayText(flight) }})
+                            }
+                          </strong>
+                        </div>
+                      }
+                      @if (flight.scheduledArrival) {
+                        <div class="flight-details__item">
+                          <span class="flight-details__label">Scheduled Arrival</span>
+                          <strong>
+                            {{ formatUtcLabel(flight.scheduledArrival) }}
+                            @if (getArrivalDelayText(flight)) {
+                              ({{ getArrivalDelayText(flight) }})
+                            }
+                          </strong>
+                        </div>
+                      }
+                      @if (flight.actualDeparture) {
+                        <div class="flight-details__item">
+                          <span class="flight-details__label">Actual Departure</span>
+                          <strong>{{ formatUtcLabel(flight.actualDeparture) }}</strong>
+                        </div>
+                      }
+                      @if (flight.actualArrival) {
+                        <div class="flight-details__item">
+                          <span class="flight-details__label">Actual Arrival</span>
+                          <strong>{{ formatUtcLabel(flight.actualArrival) }}</strong>
+                        </div>
+                      }
                       <div class="flight-details__item">
                         <span class="flight-details__label">Passengers</span>
                         <strong>{{ flight.passengerNumber }}</strong>
                       </div>
                       <div class="flight-details__item">
                         <span class="flight-details__label">Baggage</span>
-                        <strong>{{ flight.baggageTotalChecked }} on belt {{ flight.baggageConveyorBelt }}</strong>
+                        <strong>{{ flight.baggageTotalChecked }} on belt {{ flight.baggageConveyorBeltId }}</strong>
                       </div>
                       @if (getGateDescription(flight.gate)) {
                         <div class="flight-details__item">
@@ -295,53 +391,6 @@
         </table>
       </div>
     </section>
-
-    <aside class="alert-sidebar" aria-labelledby="alerts-title">
-      <div class="section-header">
-        <h2 id="alerts-title">Copilot AI Alerts</h2>
-        <p>Detected disruption chains and recommended actions.</p>
-      </div>
-
-      <div class="alert-list">
-        @for (alert of alerts; track trackByAlertId($index, alert)) {
-          <article [class]="getAlertCardClass(alert)">
-            <div class="alert-card__title-row">
-              <span class="alert-icon" [attr.aria-label]="getAlertIconLabel(alert)">
-                @if (alert.tone === 'critical') {
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="m10.29 3.86-7.8 13.5A2 2 0 0 0 4.2 20h15.6a2 2 0 0 0 1.73-3l-7.8-13.14a2 2 0 0 0-3.44 0Z" />
-                    <path d="M12 9v4" />
-                    <path d="M12 17h.01" />
-                  </svg>
-                }
-
-                @if (alert.tone === 'warning') {
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M20 7h-7" />
-                    <path d="M14 17H7" />
-                    <circle cx="17" cy="17" r="3" />
-                    <circle cx="7" cy="7" r="3" />
-                  </svg>
-                }
-
-                @if (alert.tone === 'info') {
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M20 6 9 17l-5-5" />
-                  </svg>
-                }
-              </span>
-              <h3>{{ alert.title }}</h3>
-            </div>
-
-            <p>{{ alert.message }}</p>
-
-            @if (alert.actionLabel) {
-              <button type="button" class="alert-action-button">{{ alert.actionLabel }}</button>
-            }
-          </article>
-        }
-      </div>
-    </aside>
   </section>
 </main>
 }

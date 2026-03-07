@@ -7,13 +7,15 @@ export interface DisruptionRecord {
   resourceType: string;
   resourceId: number | string;
   startsAt: string;
-  endsAt: string;
+  endsAt: string | null;
   status: string;
 }
 
 export interface CreateDisruptionPayload {
   resourceType: string;
   resourceId: number;
+  startsAt?: string;
+  endsAt?: string;
 }
 
 export interface GateRecord {
@@ -26,12 +28,18 @@ export interface RunwayRecord {
   name: string;
 }
 
+export interface BaggageConveyorBeltRecord {
+  baggageConveyorBeltId: number;
+  name?: string;
+}
+
 @Injectable({ providedIn: 'root' })
 export class DisruptionsService {
   private readonly http = inject(HttpClient);
   private readonly disruptionsApiUrl = 'http://localhost:5167/disruptions';
   private readonly gatesApiUrl = 'http://localhost:5167/gates';
   private readonly runwaysApiUrl = 'http://localhost:5167/runways';
+  private readonly baggageConveyorBeltsApiUrl = 'http://localhost:5167/baggageconveyorbelts';
 
   getGates(): Observable<GateRecord[]> {
     return this.http.get<GateRecord[]>(this.gatesApiUrl);
@@ -39,6 +47,10 @@ export class DisruptionsService {
 
   getRunways(): Observable<RunwayRecord[]> {
     return this.http.get<RunwayRecord[]>(this.runwaysApiUrl);
+  }
+
+  getBaggageConveyorBelts(): Observable<BaggageConveyorBeltRecord[]> {
+    return this.http.get<BaggageConveyorBeltRecord[]>(this.baggageConveyorBeltsApiUrl);
   }
 
   getDisruptions(): Observable<DisruptionRecord[]> {

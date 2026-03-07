@@ -16,6 +16,7 @@ describe('App', () => {
   const disruptionsServiceMock = {
     getGates: () => of([{ gateId: 4, name: 'Gate 4' }]),
     getRunways: () => of([{ runwayId: 19, name: '19' }]),
+    getBaggageConveyorBelts: () => of([{ baggageConveyorBeltId: 1, name: 'Carousel 1' }]),
     getDisruptions: () => of([]),
     createDisruption: () =>
       of({

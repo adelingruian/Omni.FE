@@ -9,19 +9,25 @@ export interface FlightRecord {
   aircraft: string;
   origin: string;
   destination: string;
-  scheduledDeparture: string;
+  scheduledDeparture: string | null;
   actualDeparture: string | null;
-  scheduledArrival: string;
+  scheduledArrival: string | null;
   actualArrival: string | null;
   gate: FlightGateRecord;
   runway: FlightRunwayRecord | string;
   passengerNumber: number;
-  delayMinutes: number;
-  crewPilots: number;
-  crewFlightAttendants: number;
-  baggageConveyorBelt: string;
+  possibleDelayMinutes?: number;
+  baggageConveyorBeltId: number;
   baggageTotalChecked: number;
+  disruptionScore?: FlightDisruptionScore;
 }
+
+export interface FlightDisruptionScore {
+  totalPoints: number;
+  severity: FlightDisruptionSeverity;
+}
+
+export type FlightDisruptionSeverity = 'On Time' | 'Low Risk' | 'Medium Risk' | 'High Risk' | 'CRITICAL';
 
 export interface FlightGateRecord {
   gateName?: string;

@@ -2,6 +2,7 @@ import { Component, DestroyRef, OnDestroy, inject } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import {
   CopilotAlert,
+  FlightDisruptionSeverity,
   FlightGateStatus,
   FlightRecord,
   FlightSocketPayloadLog,
@@ -11,6 +12,7 @@ import {
   FlightRunwayStatus
 } from './services/flights.service';
 import {
+  BaggageConveyorBeltRecord,
   DisruptionRecord,
   DisruptionsService,
   GateRecord,
@@ -43,13 +45,19 @@ export class App implements OnDestroy {
   protected flightsSocketUpdateCount = 0;
   protected flightsSocketLastUpdateAt: string | null = null;
   protected flightsSocketPayloadLogs: FlightSocketPayloadLog[] = [];
+  protected departureFilter = 'all';
+  protected arrivalFilter = 'all';
+  protected showOnlyAffectedFlights = false;
 
   protected disruptions: DisruptionRecord[] = [];
   protected controlResourceType = 'Gate';
   protected gates: GateRecord[] = [];
   protected runways: RunwayRecord[] = [];
+  protected baggageConveyorBelts: BaggageConveyorBeltRecord[] = [];
+  protected controlResourceOptions: Array<{ id: number; label: string }> = [];
   protected controlResourceId = '';
-  protected controlSolveId = '1';
+  protected controlStartHour = '';
+  protected controlEndHour = '';
   protected controlStatusMessage = '';
   protected controlError = '';
   protected isControlBusy = false;
@@ -126,6 +134,7 @@ export class App implements OnDestroy {
       .subscribe({
         next: (gates) => {
           this.gates = gates;
+          this.updateControlResourceOptionsFromCache();
           this.ensureControlResourceSelection();
         },
         error: () => {
@@ -141,6 +150,7 @@ export class App implements OnDestroy {
       .subscribe({
         next: (runways) => {
           this.runways = runways;
+          this.updateControlResourceOptionsFromCache();
           this.ensureControlResourceSelection();
         },
         error: () => {
@@ -150,8 +160,15 @@ export class App implements OnDestroy {
   }
 
   protected loadResourceOptions(): void {
+    this.updateControlResourceOptionsFromCache();
+
     if (this.controlResourceType === 'Runway') {
       this.loadRunways();
+      return;
+    }
+
+    if (this.controlResourceType === 'BaggageConveyorBelt') {
+      this.loadBaggageConveyorBelts();
       return;
     }
 
@@ -161,6 +178,7 @@ export class App implements OnDestroy {
   protected onControlResourceTypeChange(resourceType: string): void {
     this.controlResourceType = resourceType;
     this.controlResourceId = '';
+    this.updateControlResourceOptionsFromCache();
     this.loadResourceOptions();
   }
 
@@ -187,9 +205,32 @@ export class App implements OnDestroy {
   protected createDisruption(): void {
     const resourceType = this.controlResourceType.trim();
     const resourceId = Number.parseInt(this.controlResourceId, 10);
+    const hasStartHour = this.controlStartHour.trim().length > 0;
+    const hasEndHour = this.controlEndHour.trim().length > 0;
+    const hasCustomWindow = hasStartHour || hasEndHour;
+    const startIso = hasStartHour ? this.buildUtcIsoFromHour(this.controlStartHour) : null;
+    const endIso = hasEndHour ? this.buildUtcIsoFromHour(this.controlEndHour) : null;
 
     if (!resourceType || !Number.isFinite(resourceId) || resourceId <= 0) {
       this.controlError = 'Resource type and resource id are required.';
+      this.controlStatusMessage = '';
+      return;
+    }
+
+    if (hasStartHour !== hasEndHour) {
+      this.controlError = 'Provide both start and end hour, or leave both empty.';
+      this.controlStatusMessage = '';
+      return;
+    }
+
+    if (hasCustomWindow && (!startIso || !endIso)) {
+      this.controlError = 'Invalid start or end hour value.';
+      this.controlStatusMessage = '';
+      return;
+    }
+
+    if (startIso && endIso && Date.parse(endIso) <= Date.parse(startIso)) {
+      this.controlError = 'End hour must be after start hour.';
       this.controlStatusMessage = '';
       return;
     }
@@ -198,12 +239,26 @@ export class App implements OnDestroy {
     this.controlError = '';
     this.controlStatusMessage = '';
 
+    const payload: {
+      resourceType: string;
+      resourceId: number;
+      startsAt?: string;
+      endsAt?: string;
+    } = { resourceType, resourceId };
+
+    if (startIso && endIso) {
+      payload.startsAt = startIso;
+      payload.endsAt = endIso;
+    }
+
     this.disruptionsService
-      .createDisruption({ resourceType, resourceId })
+      .createDisruption(payload)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: () => {
-          this.controlStatusMessage = `Disruption created for ${resourceType} ${resourceId}.`;
+          this.controlStatusMessage = startIso && endIso
+            ? `Disruption created for ${resourceType} ${resourceId} (${this.controlStartHour}-${this.controlEndHour} UTC).`
+            : `Disruption created for ${resourceType} ${resourceId}.`;
           this.loadDisruptions();
         },
         error: () => {
@@ -221,20 +276,67 @@ export class App implements OnDestroy {
     return runway.name;
   }
 
+  protected loadBaggageConveyorBelts(): void {
+    this.disruptionsService
+      .getBaggageConveyorBelts()
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (baggageConveyorBelts) => {
+          this.baggageConveyorBelts = baggageConveyorBelts;
+          this.updateControlResourceOptionsFromCache();
+          this.ensureControlResourceSelection();
+        },
+        error: () => {
+          this.controlError = 'Failed to load baggage conveyor belts.';
+        }
+      });
+  }
+
+  protected getBaggageConveyorBeltOptionLabel(belt: BaggageConveyorBeltRecord): string {
+    return belt.name || `Belt ${belt.baggageConveyorBeltId}`;
+  }
+
   protected getControlResourceOptions(): Array<{ id: number; label: string }> {
+    return this.controlResourceOptions;
+  }
+
+  private updateControlResourceOptionsFromCache(): void {
     if (this.controlResourceType === 'Runway') {
-      return this.runways.map((runway) => ({ id: runway.runwayId, label: this.getRunwayOptionLabel(runway) }));
+      this.controlResourceOptions = this.runways.map((runway) => ({
+        id: runway.runwayId,
+        label: this.getRunwayOptionLabel(runway)
+      }));
+      return;
     }
 
-    return this.gates.map((gate) => ({ id: gate.gateId, label: this.getGateOptionLabel(gate) }));
+    if (this.controlResourceType === 'BaggageConveyorBelt') {
+      this.controlResourceOptions = this.baggageConveyorBelts.map((belt) => ({
+        id: belt.baggageConveyorBeltId,
+        label: this.getBaggageConveyorBeltOptionLabel(belt)
+      }));
+      return;
+    }
+
+    this.controlResourceOptions = this.gates.map((gate) => ({
+      id: gate.gateId,
+      label: this.getGateOptionLabel(gate)
+    }));
   }
 
   protected getControlResourceLabel(): string {
-    return this.controlResourceType === 'Runway' ? 'Runway' : 'Gate';
+    if (this.controlResourceType === 'Runway') {
+      return 'Runway';
+    }
+
+    if (this.controlResourceType === 'BaggageConveyorBelt') {
+      return 'Baggage Conveyor Belt';
+    }
+
+    return 'Gate';
   }
 
   private ensureControlResourceSelection(): void {
-    const options = this.getControlResourceOptions();
+    const options = this.controlResourceOptions;
 
     if (!this.controlResourceId && options.length > 0) {
       this.controlResourceId = String(options[0].id);
@@ -246,9 +348,7 @@ export class App implements OnDestroy {
     }
   }
 
-  protected solveDisruption(): void {
-    const id = Number.parseInt(this.controlSolveId, 10);
-
+  protected solveDisruptionById(id: number): void {
     if (!Number.isFinite(id) || id <= 0) {
       this.controlError = 'Enter a valid disruption id.';
       this.controlStatusMessage = '';
@@ -274,14 +374,60 @@ export class App implements OnDestroy {
       });
   }
 
-  protected solveDisruptionById(id: number): void {
-    this.controlSolveId = String(id);
-    this.solveDisruption();
+  private buildUtcIsoFromHour(hourValue: string): string | null {
+    if (!hourValue) {
+      return null;
+    }
+
+    const today = new Date();
+    const [hoursText, minutesText] = hourValue.split(':');
+    const hours = Number.parseInt(hoursText ?? '', 10);
+    const minutes = Number.parseInt(minutesText ?? '', 10);
+
+    if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+      return null;
+    }
+
+    return new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate(), hours, minutes, 0)).toISOString();
   }
 
   protected isDisruptionResolved(disruption: DisruptionRecord): boolean {
-    const normalized = disruption.status.trim().toLowerCase();
-    return normalized === 'resolved' || normalized === 'solved';
+    if (!disruption.endsAt) {
+      return false;
+    }
+
+    const endsAtTimestamp = Date.parse(disruption.endsAt);
+
+    if (!Number.isFinite(endsAtTimestamp)) {
+      return false;
+    }
+
+    return endsAtTimestamp <= Date.now();
+  }
+
+  protected formatBackendUtcDateTime(isoValue: string | null): string {
+    if (!isoValue) {
+      return '-';
+    }
+
+    const directParts = this.getIsoDateTimeParts(isoValue);
+
+    if (directParts) {
+      return `${directParts.year}-${directParts.month}-${directParts.day} ${directParts.hour}:${directParts.minute}:${directParts.second}`;
+    }
+
+    const timestamp = Date.parse(isoValue);
+
+    if (!Number.isFinite(timestamp)) {
+      return isoValue;
+    }
+
+    const isoUtc = new Date(timestamp).toISOString();
+    return isoUtc.slice(0, 19).replace('T', ' ');
+  }
+
+  protected getBackendUtcRawValue(isoValue: string | null): string {
+    return isoValue ?? '-';
   }
 
   protected getVisibleDisruptions(): DisruptionRecord[] {
@@ -292,24 +438,84 @@ export class App implements OnDestroy {
     return this.disruptions.filter((disruption) => !this.isDisruptionResolved(disruption));
   }
 
+  protected getVisibleFlights(): FlightRecord[] {
+    return this.flights.filter((flight) => {
+      const matchesDeparture = this.departureFilter === 'all' || flight.origin === this.departureFilter;
+      const matchesArrival = this.arrivalFilter === 'all' || flight.destination === this.arrivalFilter;
+      const isAffected = this.isFlightAffected(flight);
+      const matchesAffected = !this.showOnlyAffectedFlights || isAffected;
+
+      return matchesDeparture && matchesArrival && matchesAffected;
+    });
+  }
+
+  protected getDepartureFilterOptions(): string[] {
+    return [...new Set(this.flights.map((flight) => flight.origin))].sort((a, b) => a.localeCompare(b));
+  }
+
+  protected getArrivalFilterOptions(): string[] {
+    return [...new Set(this.flights.map((flight) => flight.destination))].sort((a, b) => a.localeCompare(b));
+  }
+
+  protected filterOmrDepartures(): void {
+    if (this.departureFilter === 'OMR' && this.arrivalFilter === 'all') {
+      this.departureFilter = 'all';
+      return;
+    }
+
+    this.departureFilter = 'OMR';
+    this.arrivalFilter = 'all';
+  }
+
+  protected filterOmrArrivals(): void {
+    if (this.arrivalFilter === 'OMR' && this.departureFilter === 'all') {
+      this.arrivalFilter = 'all';
+      return;
+    }
+
+    this.arrivalFilter = 'OMR';
+    this.departureFilter = 'all';
+  }
+
   private updateMetrics(): void {
     this.totalFlights = this.flights.length;
-    this.delayedFlights = this.flights.filter((flight) => flight.delayMinutes > 0).length;
-    this.criticalFlights = this.flights.filter((flight) => flight.delayMinutes > 15).length;
+    this.delayedFlights = this.flights.filter((flight) => this.getComputedDelayMinutes(flight) > 0).length;
+    this.criticalFlights = this.flights.filter((flight) => this.getComputedDelayMinutes(flight) > 15).length;
     this.totalPassengers = this.flights.reduce((sum, flight) => sum + flight.passengerNumber, 0);
   }
 
   protected formatUtcLabel(isoValue: string): string {
-    return new Intl.DateTimeFormat('en-GB', {
-      day: '2-digit',
-      month: 'short',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-      timeZone: 'UTC'
-    })
-      .format(new Date(isoValue))
-      .replace(',', '');
+    const directParts = this.getIsoDateTimeParts(isoValue);
+
+    if (directParts) {
+      return `${directParts.year}-${directParts.month}-${directParts.day} ${directParts.hour}:${directParts.minute}`;
+    }
+
+    const timestamp = Date.parse(isoValue);
+
+    if (!Number.isFinite(timestamp)) {
+      return isoValue;
+    }
+
+    const isoUtc = new Date(timestamp).toISOString();
+    return isoUtc.slice(0, 16).replace('T', ' ');
+  }
+
+  protected formatTime24h(isoValue: string): string {
+    const directParts = this.getIsoDateTimeParts(isoValue);
+
+    if (directParts) {
+      return `${directParts.hour}:${directParts.minute}`;
+    }
+
+    const timestamp = Date.parse(isoValue);
+
+    if (!Number.isFinite(timestamp)) {
+      return isoValue;
+    }
+
+    const isoUtc = new Date(timestamp).toISOString();
+    return isoUtc.slice(11, 16);
   }
 
   protected getStatusLabel(delayMinutes: number): string {
@@ -334,6 +540,56 @@ export class App implements OnDestroy {
     }
 
     return 'status-pill status-pill--red';
+  }
+
+  protected getDisruptionScorePoints(flight: FlightRecord): number {
+    return flight.disruptionScore?.totalPoints ?? 0;
+  }
+
+  protected getDisruptionRiskLabel(flight: FlightRecord): FlightDisruptionSeverity {
+    return flight.disruptionScore?.severity ?? 'On Time';
+  }
+
+  protected getDisruptionScoreClass(flight: FlightRecord): string {
+    const risk = this.getDisruptionRiskLabel(flight);
+
+    if (risk === 'CRITICAL') {
+      return 'risk-badge risk-badge--critical';
+    }
+
+    if (risk === 'High Risk') {
+      return 'risk-badge risk-badge--high';
+    }
+
+    if (risk === 'Medium Risk') {
+      return 'risk-badge risk-badge--medium';
+    }
+
+    if (risk === 'Low Risk') {
+      return 'risk-badge risk-badge--low';
+    }
+
+    return 'risk-badge risk-badge--ontime';
+  }
+
+  protected isCriticalRisk(flight: FlightRecord): boolean {
+    return this.getDisruptionRiskLabel(flight) === 'CRITICAL';
+  }
+
+  protected getComputedDelayMinutes(flight: FlightRecord): number {
+    const departureDelay = this.getDelayMinutesFromTimes(flight.scheduledDeparture, flight.actualDeparture) ?? 0;
+    const arrivalDelay = this.getDelayMinutesFromTimes(flight.scheduledArrival, flight.actualArrival) ?? 0;
+    return Math.max(departureDelay, arrivalDelay);
+  }
+
+  protected getDepartureDelayText(flight: FlightRecord): string {
+    const delay = this.getDelayMinutesFromTimes(flight.scheduledDeparture, flight.actualDeparture);
+    return this.formatDelayMinutes(delay);
+  }
+
+  protected getArrivalDelayText(flight: FlightRecord): string {
+    const delay = this.getDelayMinutesFromTimes(flight.scheduledArrival, flight.actualArrival);
+    return this.formatDelayMinutes(delay);
   }
 
   protected getGateLabel(gate: FlightRecord['gate']): string {
@@ -424,6 +680,77 @@ export class App implements OnDestroy {
     return 'runway-label';
   }
 
+  protected getBaggageCarouselLabel(flight: FlightRecord): string {
+    if (!this.isArrivalFlight(flight)) {
+      return '';
+    }
+
+    if (!flight.baggageConveyorBeltId || flight.baggageConveyorBeltId <= 0) {
+      return '';
+    }
+
+    return `Carousel ${flight.baggageConveyorBeltId}`;
+  }
+
+  private isFlightAffected(flight: FlightRecord): boolean {
+    const disruptionRisk = this.getDisruptionRiskLabel(flight);
+
+    if (disruptionRisk !== 'On Time') {
+      return true;
+    }
+
+    if (this.getComputedDelayMinutes(flight) > 0) {
+      return true;
+    }
+
+    return this.isGateAffected(flight.gate) || this.isRunwayAffected(flight.runway);
+  }
+
+  private isArrivalFlight(flight: FlightRecord): boolean {
+    return flight.destination?.trim().toUpperCase() === 'OMR';
+  }
+
+  private isGateAffected(gate: FlightRecord['gate']): boolean {
+    const status = this.normalizeStatus(gate.status);
+    return status === 'conflict' || status === 'unavailable' || status === '0' || status === '1';
+  }
+
+  private isRunwayAffected(runway: FlightRecord['runway']): boolean {
+    if (typeof runway === 'string') {
+      return false;
+    }
+
+    const status = this.normalizeStatus(runway.status);
+    return status === 'conflict' || status === 'unavailable' || status === '0' || status === '1';
+  }
+
+  private normalizeStatus(statusValue: unknown): string {
+    return statusValue?.toString().trim().toLowerCase() ?? '';
+  }
+
+  private getDelayMinutesFromTimes(scheduledIso: string | null, actualIso: string | null): number | null {
+    if (!scheduledIso || !actualIso) {
+      return null;
+    }
+
+    const scheduled = Date.parse(scheduledIso);
+    const actual = Date.parse(actualIso);
+
+    if (!Number.isFinite(scheduled) || !Number.isFinite(actual)) {
+      return null;
+    }
+
+    return Math.max(0, Math.round((actual - scheduled) / 60000));
+  }
+
+  private formatDelayMinutes(delayMinutes: number | null): string {
+    if (delayMinutes === null || delayMinutes <= 0) {
+      return '';
+    }
+
+    return `+${delayMinutes} mins`;
+  }
+
   private getNormalizedRunwayStatus(runway: FlightRunwayRecord): string {
     return runway.status?.toString().trim().toLowerCase() ?? '';
   }
@@ -447,14 +774,6 @@ export class App implements OnDestroy {
     }
 
     return `Show details for ${flight.flightNumber}`;
-  }
-
-  protected formatOptionalUtcLabel(isoValue: string | null): string {
-    if (!isoValue) {
-      return 'Not available';
-    }
-
-    return `${this.formatUtcLabel(isoValue)}Z`;
   }
 
   protected formatSocketTimestamp(isoValue: string | null): string {
@@ -487,5 +806,30 @@ export class App implements OnDestroy {
 
   protected trackByAlertId(_: number, alert: CopilotAlert): number {
     return alert.id;
+  }
+
+  private getIsoDateTimeParts(isoValue: string): {
+    year: string;
+    month: string;
+    day: string;
+    hour: string;
+    minute: string;
+    second: string;
+  } | null {
+    const isoPattern = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))/;
+    const match = isoPattern.exec(isoValue);
+
+    if (!match) {
+      return null;
+    }
+
+    return {
+      year: match[1],
+      month: match[2],
+      day: match[3],
+      hour: match[4],
+      minute: match[5],
+      second: match[6] ?? '00'
+    };
   }
 }

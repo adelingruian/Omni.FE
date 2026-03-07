@@ -15,17 +15,18 @@
 
         <label>
           Resource Type
-          <select [value]="controlResourceType" (change)="controlResourceType = $any($event.target).value">
+          <select [value]="controlResourceType" (change)="onControlResourceTypeChange($any($event.target).value)">
             <option value="Gate">Gate</option>
+            <option value="Runway">Runway</option>
           </select>
         </label>
 
         <label>
-          Gate
+          {{ getControlResourceLabel() }}
           <select [value]="controlResourceId" (change)="controlResourceId = $any($event.target).value">
-            <option value="" disabled>Select a gate</option>
-            @for (gate of gates; track gate.gateId) {
-              <option [value]="gate.name">{{ getGateOptionLabel(gate) }}</option>
+            <option value="" disabled>Select a {{ getControlResourceLabel().toLowerCase() }}</option>
+            @for (resource of getControlResourceOptions(); track resource.id) {
+              <option [value]="resource.id">{{ resource.label }}</option>
             }
           </select>
         </label>
@@ -154,17 +155,46 @@
         <p>Live disruptions and readiness indicators for dispatchers.</p>
       </div>
 
+      <section class="socket-health" aria-label="Flights live feed diagnostics">
+        <span class="socket-health__item">
+          Socket:
+          <strong [class]="'socket-state socket-state--' + flightsSocketState">{{ flightsSocketState }}</strong>
+        </span>
+        <span class="socket-health__item">Updates: <strong>{{ flightsSocketUpdateCount }}</strong></span>
+        <span class="socket-health__item">Last update: <strong>{{ formatSocketTimestamp(flightsSocketLastUpdateAt) }}</strong></span>
+        <span class="socket-health__item">Last source: <strong>{{ flightsUpdateSource }}</strong></span>
+        <button type="button" class="socket-health__button" (click)="reloadFlightsFromRest()">Test REST Pull</button>
+      </section>
+
+      <details class="socket-payloads" aria-label="Flights socket payloads">
+        <summary>Socket Payload Log ({{ flightsSocketPayloadLogs.length }})</summary>
+
+        @if (flightsSocketPayloadLogs.length === 0) {
+          <p class="socket-payloads__empty">No payload received yet.</p>
+        } @else {
+          <div class="socket-payloads__list">
+            @for (payload of flightsSocketPayloadLogs; track payload.receivedAt) {
+              <article class="socket-payloads__entry">
+                <p class="socket-payloads__time">{{ formatSocketTimestamp(payload.receivedAt) }}</p>
+                <pre>{{ payload.payloadText }}</pre>
+              </article>
+            }
+          </div>
+        }
+      </details>
+
       <div class="table-scroll">
         <table>
           <thead>
             <tr>
+              <th scope="col">More</th>
               <th scope="col">Flight</th>
               <th scope="col">Route</th>
               <th scope="col">Aircraft</th>
-              <th scope="col">Scheduled Time</th>
+              <th scope="col">Runway</th>
+              <th scope="col">Scheduled Dep / Arr</th>
               <th scope="col">Gate</th>
-              <th scope="col">Baggage</th>
-              <th scope="col">Status/Delay</th>
+              <th scope="col">Status</th>
             </tr>
           </thead>
 
@@ -172,20 +202,30 @@
             @for (flight of flights; track trackByFlightId($index, flight)) {
               <tr>
                 <td>
+                  <button
+                    type="button"
+                    class="expand-row-button"
+                    [attr.aria-expanded]="isFlightExpanded(flight.flightId)"
+                    [attr.aria-label]="getExpandedToggleLabel(flight)"
+                    (click)="toggleFlightExpanded(flight.flightId)"
+                  >
+                    {{ isFlightExpanded(flight.flightId) ? 'Hide' : 'View' }}
+                  </button>
+                </td>
+                <td>
                   <span class="flight-code">{{ flight.flightNumber }}</span>
                 </td>
                 <td>{{ flight.origin }} -> {{ flight.destination }}</td>
                 <td>{{ flight.aircraft }}</td>
-                <td>{{ formatUtcLabel(flight.scheduledDeparture) }}Z</td>
                 <td>
-                  <span [class]="getGateClass(flight.gate)">{{ getGateLabel(flight.gate) }}</span>
-                  @if (getGateDescription(flight.gate)) {
-                    <span class="gate-description">{{ getGateDescription(flight.gate) }}</span>
-                  }
+                  <span [class]="getRunwayClass(flight.runway)">{{ getRunwayLabel(flight.runway) }}</span>
                 </td>
                 <td>
-                  <span class="baggage-label">{{ flight.baggageConveyorBelt }}</span>
-                  <span class="baggage-count">{{ flight.baggageTotalChecked }} bags</span>
+                  <span class="schedule-time">Dep: {{ formatUtcLabel(flight.scheduledDeparture) }}Z</span>
+                  <span class="schedule-time">Arr: {{ formatUtcLabel(flight.scheduledArrival) }}Z</span>
+                </td>
+                <td>
+                  <span [class]="getGateClass(flight.gate)">{{ getGateLabel(flight.gate) }}</span>
                 </td>
                 <td>
                   <span [class]="getStatusClass(flight.delayMinutes)">
@@ -193,6 +233,63 @@
                   </span>
                 </td>
               </tr>
+
+              @if (isFlightExpanded(flight.flightId)) {
+                <tr class="flight-details-row">
+                  <td colspan="8">
+                    <section class="flight-details" [attr.aria-label]="'Details for ' + flight.flightNumber">
+                      <div class="flight-details__item">
+                        <span class="flight-details__label">Gate Status</span>
+                        <strong>{{ getGateStatusLabel(flight.gate) }}</strong>
+                      </div>
+                      <div class="flight-details__item">
+                        <span class="flight-details__label">Runway Status</span>
+                        <strong>{{ getRunwayStatusLabel(flight.runway) }}</strong>
+                      </div>
+                      <div class="flight-details__item">
+                        <span class="flight-details__label">Scheduled Departure</span>
+                        <strong>{{ formatUtcLabel(flight.scheduledDeparture) }}Z</strong>
+                      </div>
+                      <div class="flight-details__item">
+                        <span class="flight-details__label">Scheduled Arrival</span>
+                        <strong>{{ formatUtcLabel(flight.scheduledArrival) }}Z</strong>
+                      </div>
+                      <div class="flight-details__item">
+                        <span class="flight-details__label">Actual Departure</span>
+                        <strong>{{ formatOptionalUtcLabel(flight.actualDeparture) }}</strong>
+                      </div>
+                      <div class="flight-details__item">
+                        <span class="flight-details__label">Actual Arrival</span>
+                        <strong>{{ formatOptionalUtcLabel(flight.actualArrival) }}</strong>
+                      </div>
+                      <div class="flight-details__item">
+                        <span class="flight-details__label">Crew</span>
+                        <strong>{{ flight.crewPilots }} pilots / {{ flight.crewFlightAttendants }} cabin</strong>
+                      </div>
+                      <div class="flight-details__item">
+                        <span class="flight-details__label">Passengers</span>
+                        <strong>{{ flight.passengerNumber }}</strong>
+                      </div>
+                      <div class="flight-details__item">
+                        <span class="flight-details__label">Baggage</span>
+                        <strong>{{ flight.baggageTotalChecked }} on belt {{ flight.baggageConveyorBelt }}</strong>
+                      </div>
+                      @if (getGateDescription(flight.gate)) {
+                        <div class="flight-details__item">
+                          <span class="flight-details__label">Gate Notes</span>
+                          <strong>{{ getGateDescription(flight.gate) }}</strong>
+                        </div>
+                      }
+                      @if (getRunwayDescription(flight.runway)) {
+                        <div class="flight-details__item">
+                          <span class="flight-details__label">Runway Notes</span>
+                          <strong>{{ getRunwayDescription(flight.runway) }}</strong>
+                        </div>
+                      }
+                    </section>
+                  </td>
+                </tr>
+              }
             }
           </tbody>
         </table>

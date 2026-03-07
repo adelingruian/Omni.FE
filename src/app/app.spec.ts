@@ -15,12 +15,13 @@ describe('App', () => {
 
   const disruptionsServiceMock = {
     getGates: () => of([{ gateId: 4, name: 'Gate 4' }]),
+    getRunways: () => of([{ runwayId: 19, name: '19' }]),
     getDisruptions: () => of([]),
     createDisruption: () =>
       of({
         disruptionId: 1,
         resourceType: 'Gate',
-        resourceId: 'Gate 1',
+        resourceId: 1,
         startsAt: '2026-03-06T00:00:00+02:00',
         endsAt: '2026-03-07T00:00:00+02:00',
         status: 'Solved'

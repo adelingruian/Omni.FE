@@ -5,7 +5,7 @@ import { Observable } from 'rxjs';
 export interface DisruptionRecord {
   disruptionId: number;
   resourceType: string;
-  resourceId: string;
+  resourceId: number | string;
   startsAt: string;
   endsAt: string;
   status: string;
@@ -13,11 +13,16 @@ export interface DisruptionRecord {
 
 export interface CreateDisruptionPayload {
   resourceType: string;
-  resourceId: string;
+  resourceId: number;
 }
 
 export interface GateRecord {
   gateId: number;
+  name: string;
+}
+
+export interface RunwayRecord {
+  runwayId: number;
   name: string;
 }
 
@@ -26,9 +31,14 @@ export class DisruptionsService {
   private readonly http = inject(HttpClient);
   private readonly disruptionsApiUrl = 'http://localhost:5167/disruptions';
   private readonly gatesApiUrl = 'http://localhost:5167/gates';
+  private readonly runwaysApiUrl = 'http://localhost:5167/runways';
 
   getGates(): Observable<GateRecord[]> {
     return this.http.get<GateRecord[]>(this.gatesApiUrl);
+  }
+
+  getRunways(): Observable<RunwayRecord[]> {
+    return this.http.get<RunwayRecord[]>(this.runwaysApiUrl);
   }
 
   getDisruptions(): Observable<DisruptionRecord[]> {

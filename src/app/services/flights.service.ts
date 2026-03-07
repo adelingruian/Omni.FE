@@ -1,7 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import * as signalR from '@microsoft/signalr';
-import { Observable, Subject } from 'rxjs';
+import { BehaviorSubject, Observable, Subject } from 'rxjs';
 
 export interface FlightRecord {
   flightId: number;
@@ -14,7 +14,7 @@ export interface FlightRecord {
   scheduledArrival: string;
   actualArrival: string | null;
   gate: FlightGateRecord;
-  runway: string;
+  runway: FlightRunwayRecord | string;
   passengerNumber: number;
   delayMinutes: number;
   crewPilots: number;
@@ -25,12 +25,26 @@ export interface FlightRecord {
 
 export interface FlightGateRecord {
   gateName?: string;
-  gateId?: string;
+  name?: string;
+  gateId?: number | string;
   status: FlightGateStatus;
-  description: string;
+  description: string | null;
+}
+
+export interface FlightRunwayRecord {
+  runwayId?: number | string;
+  name?: string;
+  status: FlightRunwayStatus;
+  description: string | null;
 }
 
 export enum FlightGateStatus {
+  Unavailable = 'Unavailable',
+  Conflict = 'Conflict',
+  Ok = 'Ok'
+}
+
+export enum FlightRunwayStatus {
   Unavailable = 'Unavailable',
   Conflict = 'Conflict',
   Ok = 'Ok'
@@ -44,12 +58,23 @@ export interface CopilotAlert {
   actionLabel?: string;
 }
 
+export type FlightSocketState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'error';
+
+export interface FlightSocketPayloadLog {
+  receivedAt: string;
+  payloadText: string;
+}
+
 @Injectable({ providedIn: 'root' })
 export class FlightsService {
   private readonly http = inject(HttpClient);
   private readonly flightsApiUrl = 'http://localhost:5167/flights';
   private readonly flightsHubUrl = 'http://localhost:5167/hubs/flights';
   private readonly flightsUpdatesSubject = new Subject<FlightRecord[]>();
+  private readonly socketStateSubject = new BehaviorSubject<FlightSocketState>('disconnected');
+  private readonly socketUpdateCountSubject = new BehaviorSubject<number>(0);
+  private readonly socketLastUpdateAtSubject = new BehaviorSubject<string | null>(null);
+  private readonly socketPayloadLogsSubject = new BehaviorSubject<FlightSocketPayloadLog[]>([]);
 
   private hubConnection: signalR.HubConnection | null = null;
 
@@ -86,10 +111,28 @@ export class FlightsService {
     return this.flightsUpdatesSubject.asObservable();
   }
 
+  getFlightsSocketState(): Observable<FlightSocketState> {
+    return this.socketStateSubject.asObservable();
+  }
+
+  getFlightsSocketUpdateCount(): Observable<number> {
+    return this.socketUpdateCountSubject.asObservable();
+  }
+
+  getFlightsSocketLastUpdateAt(): Observable<string | null> {
+    return this.socketLastUpdateAtSubject.asObservable();
+  }
+
+  getFlightsSocketPayloadLogs(): Observable<FlightSocketPayloadLog[]> {
+    return this.socketPayloadLogsSubject.asObservable();
+  }
+
   startFlightsUpdates(): void {
     if (this.hubConnection) {
       return;
     }
+
+    this.socketStateSubject.next('connecting');
 
     this.hubConnection = new signalR.HubConnectionBuilder()
       .withUrl(this.flightsHubUrl, { withCredentials: true })
@@ -97,13 +140,40 @@ export class FlightsService {
       .build();
 
     this.hubConnection.on('FlightsUpdated', (flights: FlightRecord[]) => {
+      this.socketUpdateCountSubject.next(this.socketUpdateCountSubject.value + 1);
+      this.socketLastUpdateAtSubject.next(new Date().toISOString());
+      this.socketPayloadLogsSubject.next([
+        {
+          receivedAt: new Date().toISOString(),
+          payloadText: JSON.stringify(flights, null, 2)
+        },
+        ...this.socketPayloadLogsSubject.value
+      ].slice(0, 20));
       this.flightsUpdatesSubject.next(flights);
     });
 
-    void this.hubConnection.start().catch((error: unknown) => {
-      console.error('SignalR flights hub connection failed', error);
-      this.hubConnection = null;
+    this.hubConnection.onreconnecting(() => {
+      this.socketStateSubject.next('reconnecting');
     });
+
+    this.hubConnection.onreconnected(() => {
+      this.socketStateSubject.next('connected');
+    });
+
+    this.hubConnection.onclose(() => {
+      this.socketStateSubject.next('disconnected');
+    });
+
+    void this.hubConnection
+      .start()
+      .then(() => {
+        this.socketStateSubject.next('connected');
+      })
+      .catch((error: unknown) => {
+        console.error('SignalR flights hub connection failed', error);
+        this.socketStateSubject.next('error');
+        this.hubConnection = null;
+      });
   }
 
   stopFlightsUpdates(): void {
@@ -113,6 +183,7 @@ export class FlightsService {
 
     const connection = this.hubConnection;
     this.hubConnection = null;
+    this.socketStateSubject.next('disconnected');
     void connection.stop();
   }
 

@@ -34,23 +34,32 @@
 
         <label>
           Start Hour (UTC, optional)
-          <input
-            type="time"
-            [value]="controlStartHour"
-            (input)="controlStartHour = $any($event.target).value"
-          />
+          <select [value]="controlStartHour" (change)="controlStartHour = $any($event.target).value">
+            <option value="">Select start hour</option>
+            @for (hourOption of controlHourOptions; track hourOption) {
+              <option [value]="hourOption">{{ hourOption }}</option>
+            }
+          </select>
         </label>
 
         <label>
           End Hour (UTC, optional)
-          <input
-            type="time"
-            [value]="controlEndHour"
-            (input)="controlEndHour = $any($event.target).value"
-          />
+          <select [value]="controlEndHour" (change)="controlEndHour = $any($event.target).value">
+            <option value="">Select end hour</option>
+            @for (hourOption of controlHourOptions; track hourOption) {
+              <option [value]="hourOption">{{ hourOption }}</option>
+            }
+          </select>
         </label>
 
         <button type="button" (click)="createDisruption()" [disabled]="isControlBusy">Create</button>
+      </article>
+
+      <article class="control-card">
+        <h2>Admin</h2>
+        <p>DELETE <code>/admin/reset</code></p>
+        <p>Resets the backend database to its initial seeded state.</p>
+        <button type="button" class="secondary" (click)="resetDatabase()" [disabled]="isControlBusy">Reset Database</button>
       </article>
     </section>
 
@@ -190,6 +199,21 @@
         }
       </details>
 
+      <details class="socket-payloads" aria-label="Suggested actions payloads">
+        <summary>Suggested Actions ({{ suggestedActions.length }})</summary>
+
+        @if (suggestedActions.length === 0) {
+          <p class="socket-payloads__empty">No suggested actions received yet.</p>
+        } @else {
+          <div class="socket-payloads__list">
+            <article class="socket-payloads__entry">
+              <p class="socket-payloads__time">Latest suggested actions payload</p>
+              <pre>{{ suggestedActionsPayloadText }}</pre>
+            </article>
+          </div>
+        }
+      </details>
+
       <section class="flight-filters" aria-label="Flight filters">
         <div class="flight-filters__quick-actions">
           <button
@@ -313,7 +337,29 @@
                     </span>
                   </div>
                 </td>
-                <td></td>
+                <td>
+                  <div class="suggested-action-cell">
+                    <button
+                      type="button"
+                      [class]="getSuggestedActionBubbleClass(flight.flightId)"
+                      [disabled]="!canExecuteSuggestion(flight.flightId)"
+                      (click)="onSuggestedActionBubbleClick(flight.flightId)"
+                    >
+                      @if (isExecutingSuggestion(flight.flightId) || (aiSuggestionsLoading && !hasSuggestedAction(flight.flightId))) {
+                        <span class="ai-thinking" aria-live="polite">
+                          <span class="ai-thinking__dot"></span>
+                          <span class="ai-thinking__dot"></span>
+                          <span class="ai-thinking__dot"></span>
+                          AI thinking
+                        </span>
+                      } @else {
+                        {{ getSuggestedActionLabel(flight.flightId) }}
+                      }
+                    </button>
+
+                    <span class="suggested-action-hint">{{ getSuggestedActionHint(flight.flightId) }}</span>
+                  </div>
+                </td>
               </tr>
 
               @if (isFlightExpanded(flight.flightId)) {
@@ -368,7 +414,7 @@
                       </div>
                       <div class="flight-details__item">
                         <span class="flight-details__label">Baggage</span>
-                        <strong>{{ flight.baggageTotalChecked }} on belt {{ flight.baggageConveyorBeltId }}</strong>
+                        <strong>{{ flight.baggageTotalChecked }} {{ getBaggageDetailsLabel(flight) }}</strong>
                       </div>
                       @if (getGateDescription(flight.gate)) {
                         <div class="flight-details__item">

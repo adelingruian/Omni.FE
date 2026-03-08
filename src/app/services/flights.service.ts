@@ -17,7 +17,7 @@ export interface FlightRecord {
   runway: FlightRunwayRecord | string;
   passengerNumber: number;
   possibleDelayMinutes?: number;
-  baggageConveyorBeltId: number;
+  baggageConveyorBeltId?: number | null;
   baggageTotalChecked: number;
   disruptionScore?: FlightDisruptionScore;
 }
@@ -71,10 +71,37 @@ export interface FlightSocketPayloadLog {
   payloadText: string;
 }
 
+export interface FlightPossibleAction {
+  flightId: number;
+  flightNumber?: string;
+  description?: string;
+  tool?: {
+    name?: string;
+    parameters?: Record<string, unknown>;
+  };
+  actionType?: string;
+  reason?: string;
+  estimatedDelayReductionMinutes?: number;
+  suggestedAction?: string;
+  recommendedAction?: string;
+  recommandedAction?: string;
+  action?: string;
+  recommendation?: string;
+  recommendedActions?: string[];
+  recommandedActions?: string[];
+  message?: string;
+}
+
+export interface ExecuteAiSuggestedActionPayload {
+  toolName: string;
+  parameters: Record<string, unknown>;
+}
+
 @Injectable({ providedIn: 'root' })
 export class FlightsService {
   private readonly http = inject(HttpClient);
   private readonly flightsApiUrl = 'http://localhost:5167/flights';
+  private readonly aiSuggestedActionsApiUrl = 'http://localhost:5167/ai-suggested-actions';
   private readonly flightsHubUrl = 'http://localhost:5167/hubs/flights';
   private readonly flightsUpdatesSubject = new Subject<FlightRecord[]>();
   private readonly socketStateSubject = new BehaviorSubject<FlightSocketState>('disconnected');
@@ -111,6 +138,14 @@ export class FlightsService {
 
   getFlights(): Observable<FlightRecord[]> {
     return this.http.get<FlightRecord[]>(this.flightsApiUrl);
+  }
+
+  getAiSuggestedActions(): Observable<FlightPossibleAction[]> {
+    return this.http.get<FlightPossibleAction[]>(this.aiSuggestedActionsApiUrl);
+  }
+
+  executeAiSuggestedAction(payload: ExecuteAiSuggestedActionPayload): Observable<void> {
+    return this.http.post<void>(`${this.aiSuggestedActionsApiUrl}/execute`, payload);
   }
 
   getFlightsUpdates(): Observable<FlightRecord[]> {
@@ -183,14 +218,12 @@ export class FlightsService {
   }
 
   stopFlightsUpdates(): void {
-    if (!this.hubConnection) {
-      return;
+    if (this.hubConnection) {
+      const connection = this.hubConnection;
+      this.hubConnection = null;
+      this.socketStateSubject.next('disconnected');
+      void connection.stop();
     }
-
-    const connection = this.hubConnection;
-    this.hubConnection = null;
-    this.socketStateSubject.next('disconnected');
-    void connection.stop();
   }
 
   getCopilotAlerts(): CopilotAlert[] {

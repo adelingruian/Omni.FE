@@ -37,6 +37,7 @@ export interface BaggageConveyorBeltRecord {
 export class DisruptionsService {
   private readonly http = inject(HttpClient);
   private readonly disruptionsApiUrl = 'http://localhost:5167/disruptions';
+  private readonly adminApiUrl = 'http://localhost:5167/admin';
   private readonly gatesApiUrl = 'http://localhost:5167/gates';
   private readonly runwaysApiUrl = 'http://localhost:5167/runways';
   private readonly baggageConveyorBeltsApiUrl = 'http://localhost:5167/baggageconveyorbelts';
@@ -63,5 +64,9 @@ export class DisruptionsService {
 
   solveDisruption(id: number): Observable<void> {
     return this.http.post<void>(`${this.disruptionsApiUrl}/${id}/solve`, {});
+  }
+
+  resetDatabase(): Observable<void> {
+    return this.http.delete<void>(`${this.adminApiUrl}/reset`);
   }
 }

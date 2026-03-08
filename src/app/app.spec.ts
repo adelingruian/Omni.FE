@@ -7,6 +7,8 @@ import { FlightsService } from './services/flights.service';
 describe('App', () => {
   const flightsServiceMock = {
     getFlights: () => of([]),
+    getAiSuggestedActions: () => of([]),
+    executeAiSuggestedAction: (_payload: { toolName: string; parameters: Record<string, unknown> }) => of(undefined),
     getFlightsUpdates: () => EMPTY,
     getCopilotAlerts: () => [],
     startFlightsUpdates: () => undefined,

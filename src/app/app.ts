@@ -2,8 +2,10 @@ import { Component, DestroyRef, OnDestroy, inject } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import {
   CopilotAlert,
+  ExecuteAiSuggestedActionPayload,
   FlightDisruptionSeverity,
   FlightGateStatus,
+  FlightPossibleAction,
   FlightRecord,
   FlightSocketPayloadLog,
   FlightSocketState,
@@ -18,6 +20,17 @@ import {
   GateRecord,
   RunwayRecord
 } from './services/disruptions.service';
+
+type FlexibleIdValue = number | string | null | undefined;
+
+type FlightWithFlexibleBaggageFields = FlightRecord & {
+  baggageBeltId?: FlexibleIdValue;
+  baggageCarouselId?: FlexibleIdValue;
+  baggageConveyorBelt?: {
+    id?: FlexibleIdValue;
+    baggageConveyorBeltId?: FlexibleIdValue;
+  } | null;
+};
 
 @Component({
   selector: 'app-root',
@@ -45,6 +58,11 @@ export class App implements OnDestroy {
   protected flightsSocketUpdateCount = 0;
   protected flightsSocketLastUpdateAt: string | null = null;
   protected flightsSocketPayloadLogs: FlightSocketPayloadLog[] = [];
+  protected suggestedActions: FlightPossibleAction[] = [];
+  protected suggestedActionsPayloadText = '[]';
+  protected suggestedActionsByFlightId: Record<number, FlightPossibleAction> = {};
+  protected aiSuggestionsLoading = false;
+  protected executingSuggestionsByFlightId: Record<number, boolean> = {};
   protected departureFilter = 'all';
   protected arrivalFilter = 'all';
   protected showOnlyAffectedFlights = false;
@@ -56,6 +74,11 @@ export class App implements OnDestroy {
   protected baggageConveyorBelts: BaggageConveyorBeltRecord[] = [];
   protected controlResourceOptions: Array<{ id: number; label: string }> = [];
   protected controlResourceId = '';
+  protected readonly controlHourOptions = Array.from({ length: 24 }, (_, hour) => {
+    const paddedHour = String(hour).padStart(2, '0');
+
+    return `${paddedHour}:00`;
+  });
   protected controlStartHour = '';
   protected controlEndHour = '';
   protected controlStatusMessage = '';
@@ -71,15 +94,11 @@ export class App implements OnDestroy {
     }
 
     this.flightsService.getFlights().pipe(takeUntilDestroyed(this.destroyRef)).subscribe((flights) => {
-      this.flights = flights;
-      this.flightsUpdateSource = 'REST';
-      this.updateMetrics();
+      this.applyFlightsUpdate(flights, 'REST');
     });
 
     this.flightsService.getFlightsUpdates().pipe(takeUntilDestroyed(this.destroyRef)).subscribe((flights) => {
-      this.flights = flights;
-      this.flightsUpdateSource = 'SignalR';
-      this.updateMetrics();
+      this.applyFlightsUpdate(flights, 'SignalR');
     });
 
     this.flightsService
@@ -115,10 +134,46 @@ export class App implements OnDestroy {
 
   protected reloadFlightsFromRest(): void {
     this.flightsService.getFlights().pipe(takeUntilDestroyed(this.destroyRef)).subscribe((flights) => {
-      this.flights = flights;
-      this.flightsUpdateSource = 'REST';
-      this.updateMetrics();
+      this.applyFlightsUpdate(flights, 'REST');
     });
+  }
+
+  private applyFlightsUpdate(flights: FlightRecord[], source: 'REST' | 'SignalR'): void {
+    this.flights = flights;
+    this.flightsUpdateSource = source;
+    this.updateMetrics();
+    this.refreshAiSuggestedActions();
+  }
+
+  private refreshAiSuggestedActions(): void {
+    this.aiSuggestionsLoading = true;
+
+    this.flightsService
+      .getAiSuggestedActions()
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (actions) => {
+          this.setSuggestedActions(actions);
+          this.executingSuggestionsByFlightId = {};
+          this.aiSuggestionsLoading = false;
+        },
+        error: () => {
+          // Keep the latest known actions when API refresh fails.
+          this.aiSuggestionsLoading = false;
+        }
+      });
+  }
+
+  private setSuggestedActions(actions: FlightPossibleAction[]): void {
+    this.suggestedActions = actions;
+    this.suggestedActionsPayloadText = JSON.stringify(actions, null, 2);
+    this.suggestedActionsByFlightId = actions.reduce<Record<number, FlightPossibleAction>>((acc, action) => {
+      if (Number.isFinite(action.flightId) && action.flightId > 0) {
+        acc[action.flightId] = action;
+      }
+
+      return acc;
+    }, {});
   }
 
   ngOnDestroy(): void {
@@ -369,6 +424,37 @@ export class App implements OnDestroy {
         },
         error: () => {
           this.controlError = `Failed to solve disruption ${id}.`;
+          this.isControlBusy = false;
+        }
+      });
+  }
+
+  protected resetDatabase(): void {
+    const shouldReset = globalThis.confirm(
+      'Reset the database to initial data? This will remove current disruptions and restore seeded records.'
+    );
+
+    if (!shouldReset) {
+      return;
+    }
+
+    this.isControlBusy = true;
+    this.controlError = '';
+    this.controlStatusMessage = '';
+
+    this.disruptionsService
+      .resetDatabase()
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: () => {
+          this.controlStartHour = '';
+          this.controlEndHour = '';
+          this.controlStatusMessage = 'Database reset completed.';
+          this.loadResourceOptions();
+          this.loadDisruptions();
+        },
+        error: () => {
+          this.controlError = 'Failed to reset database.';
           this.isControlBusy = false;
         }
       });
@@ -681,15 +767,225 @@ export class App implements OnDestroy {
   }
 
   protected getBaggageCarouselLabel(flight: FlightRecord): string {
-    if (!this.isArrivalFlight(flight)) {
+    const beltId = this.getBaggageBeltId(flight);
+
+    if (!beltId) {
       return '';
     }
 
-    if (!flight.baggageConveyorBeltId || flight.baggageConveyorBeltId <= 0) {
-      return '';
+    return `Carousel ${beltId}`;
+  }
+
+  protected getBaggageDetailsLabel(flight: FlightRecord): string {
+    const beltId = this.getBaggageBeltId(flight);
+    return beltId ? `on belt ${beltId}` : 'without belt assignment';
+  }
+
+  protected getSuggestedActionLabel(flightId: number): string {
+    const action = this.suggestedActionsByFlightId[flightId];
+
+    if (!action) {
+      return '-';
     }
 
-    return `Carousel ${flight.baggageConveyorBeltId}`;
+    if (action.description?.trim()) {
+      return action.description.trim();
+    }
+
+    if (action.actionType || action.reason) {
+      const actionTypeLabel = this.getActionTypeLabel(action.actionType);
+      const reasonLabel = action.reason?.trim();
+      const estimatedDelayReductionMinutes = action.estimatedDelayReductionMinutes;
+      const delayReduction =
+        typeof estimatedDelayReductionMinutes === 'number' && estimatedDelayReductionMinutes > 0
+        ? ` (-${estimatedDelayReductionMinutes} mins)`
+        : '';
+
+      if (reasonLabel) {
+        return `${actionTypeLabel}: ${reasonLabel}${delayReduction}`;
+      }
+
+      return `${actionTypeLabel}${delayReduction}`;
+    }
+
+    const possibleLabels = [
+      action.suggestedAction,
+      action.recommendedAction,
+      action.recommandedAction,
+      action.action,
+      action.recommendation,
+      action.message,
+      action.description
+    ];
+
+    const firstText = possibleLabels.find((value) => typeof value === 'string' && value.trim().length > 0);
+
+    if (firstText?.trim()) {
+      return firstText.trim();
+    }
+
+    const arrayLabel = action.recommendedActions ?? action.recommandedActions;
+
+    if (Array.isArray(arrayLabel) && arrayLabel.length > 0) {
+      return arrayLabel.join(' | ');
+    }
+
+    return '-';
+  }
+
+  protected getSuggestedActionHint(flightId: number): string {
+    if (this.isExecutingSuggestion(flightId)) {
+      return 'Applying and waiting for fresh data...';
+    }
+
+    if (this.aiSuggestionsLoading && !this.hasSuggestedAction(flightId)) {
+      return 'AI is thinking...';
+    }
+
+    const action = this.suggestedActionsByFlightId[flightId];
+
+    if (!action) {
+      return 'No suggested action';
+    }
+
+    if (this.isEscalationOnlyAction(action)) {
+      return 'Ops review only (no auto-execute)';
+    }
+
+    return 'Click bubble to execute';
+  }
+
+  protected getSuggestedActionBubbleClass(flightId: number): string {
+    const action = this.suggestedActionsByFlightId[flightId];
+
+    if (!action) {
+      return 'ai-speech-bubble ai-speech-bubble--empty';
+    }
+
+    if (this.isEscalationOnlyAction(action)) {
+      return 'ai-speech-bubble ai-speech-bubble--ops-review';
+    }
+
+    if (this.canExecuteSuggestion(flightId)) {
+      return 'ai-speech-bubble ai-speech-bubble--clickable';
+    }
+
+    return 'ai-speech-bubble';
+  }
+
+  protected hasSuggestedAction(flightId: number): boolean {
+    return Boolean(this.suggestedActionsByFlightId[flightId]);
+  }
+
+  protected isExecutingSuggestion(flightId: number): boolean {
+    return this.executingSuggestionsByFlightId[flightId] === true;
+  }
+
+  protected canExecuteSuggestion(flightId: number): boolean {
+    if (this.isExecutingSuggestion(flightId)) {
+      return false;
+    }
+
+    const action = this.suggestedActionsByFlightId[flightId];
+
+    if (!action || this.isEscalationOnlyAction(action)) {
+      return false;
+    }
+
+    return true;
+  }
+
+  protected executeSuggestedAction(flightId: number): void {
+    const action = this.suggestedActionsByFlightId[flightId];
+    const executePayload = action ? this.buildExecuteSuggestedActionPayload(action) : null;
+
+    if (!action || !executePayload || !this.canExecuteSuggestion(flightId)) {
+      return;
+    }
+
+    this.executingSuggestionsByFlightId = {
+      ...this.executingSuggestionsByFlightId,
+      [flightId]: true
+    };
+
+    this.flightsService
+      .executeAiSuggestedAction(executePayload)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: () => {
+          this.reloadFlightsFromRest();
+        },
+        error: () => {
+          this.executingSuggestionsByFlightId = {
+            ...this.executingSuggestionsByFlightId,
+            [flightId]: false
+          };
+        }
+      });
+  }
+
+  protected onSuggestedActionBubbleClick(flightId: number): void {
+    if (!this.canExecuteSuggestion(flightId)) {
+      return;
+    }
+
+    this.executeSuggestedAction(flightId);
+  }
+
+  private isEscalationOnlyAction(action: FlightPossibleAction): boolean {
+    const actionType = this.normalizeActionType(this.getActionToolName(action) ?? action.actionType);
+    return actionType === 'escalate_ops_review';
+  }
+
+  private buildExecuteSuggestedActionPayload(action: FlightPossibleAction): ExecuteAiSuggestedActionPayload | null {
+    const toolName = this.getActionToolName(action);
+
+    if (!toolName) {
+      return null;
+    }
+
+    return {
+      toolName,
+      parameters: action.tool?.parameters ?? {}
+    };
+  }
+
+  private getActionToolName(action: FlightPossibleAction): string | null {
+    return action.tool?.name?.trim() || null;
+  }
+
+  private normalizeActionType(actionType: string | undefined): string {
+    return actionType?.trim().replaceAll(' ', '_').replaceAll('-', '_').toLowerCase() ?? '';
+  }
+
+  private getActionTypeLabel(actionType: string | undefined): string {
+    const normalizedType = this.normalizeActionType(actionType);
+
+    if (!normalizedType) {
+      return 'Suggested action';
+    }
+
+    if (normalizedType === 'reassign_gate') {
+      return 'Reassign Gate';
+    }
+
+    if (normalizedType === 'reassign_runway') {
+      return 'Reassign Runway';
+    }
+
+    if (normalizedType === 'reassign_belt') {
+      return 'Reassign Belt';
+    }
+
+    if (normalizedType === 'delay_pushback') {
+      return 'Delay Pushback';
+    }
+
+    if (normalizedType === 'escalate_ops_review') {
+      return 'Escalate Ops Review';
+    }
+
+    return actionType?.trim() || 'Suggested action';
   }
 
   private isFlightAffected(flight: FlightRecord): boolean {
@@ -706,8 +1002,26 @@ export class App implements OnDestroy {
     return this.isGateAffected(flight.gate) || this.isRunwayAffected(flight.runway);
   }
 
-  private isArrivalFlight(flight: FlightRecord): boolean {
-    return flight.destination?.trim().toUpperCase() === 'OMR';
+  private getBaggageBeltId(flight: FlightRecord): number | null {
+    const candidate = flight as FlightWithFlexibleBaggageFields;
+
+    const possibleValues = [
+      candidate.baggageConveyorBeltId,
+      candidate.baggageBeltId,
+      candidate.baggageCarouselId,
+      candidate.baggageConveyorBelt?.baggageConveyorBeltId,
+      candidate.baggageConveyorBelt?.id
+    ];
+
+    for (const value of possibleValues) {
+      const numericValue = typeof value === 'number' ? value : Number.parseInt(String(value ?? ''), 10);
+
+      if (Number.isFinite(numericValue) && numericValue > 0) {
+        return numericValue;
+      }
+    }
+
+    return null;
   }
 
   private isGateAffected(gate: FlightRecord['gate']): boolean {
